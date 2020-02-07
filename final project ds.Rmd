@@ -1,0 +1,151 @@
+---
+title: "final project"
+author: "Hanbin Liu"
+date: "11/29/2019"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+library('caret')
+library('ggplot2')
+library('ggthemes')
+library('e1071')
+```
+
+
+```{r}
+data(iris)
+dataset<-iris
+#split data as trainning and testing data
+validation_index<-createDataPartition(dataset$Species, p=0.75, list=FALSE)
+# select 25% of the data for validation
+validation <- dataset[-validation_index,]
+# use the remaining 75% of data to training and testing the models
+training_data <- dataset[validation_index,]
+```
+
+
+```{r}
+##summary the data
+summary(iris);dim(iris)
+# summarize the class distribution
+percent_dist <- prop.table(table(training_data$Species))*100
+cbind(freq=table(training_data$Species), percentage=percent_dist)
+```
+
+```{r}
+##Visualize the dataset
+install.packages("ellipse")
+library('ellipse')
+p=ggplot(data=iris,aes(x=Sepal.Width, y=Sepal.Length,color=Species)) + geom_point()+
+  theme_minimal()+geom_smooth(se=FALSE)
+print(p)
+
+##Boxplot for each factor
+par(mfrow=c(1,4))
+for(i in 1:4) {
+  boxplot(dataset[,i], main=names(dataset)[i])
+}
+
+histogram <- ggplot(data=iris, aes(x=Sepal.Width)) +
+  geom_histogram(binwidth=0.2, color="black", aes(fill=Species)) + 
+  xlab("Sepal Width") +  
+  ylab("Frequency") + 
+  ggtitle("Histogram of Sepal Width")+
+  theme_economist()
+print(histogram)
+
+##split input and output
+x <- dataset[,1:4]
+y <- dataset[,5]
+# scatterplot matrix(multivariate plot)
+featurePlot(x=x, y=y, plot="ellipse")
+```
+
+
+```{r}
+## Decision Tree for Iris dataset
+library(rpart)
+library(rpart.plot)
+library(tidyverse)
+library(lattice)
+set.seed(1234)
+par(mfrow=c(1,1))
+target = Species ~ Sepal.Length + Sepal.Width + Petal.Length + Petal.Width
+tree = rpart(target, data = training_data, method = "class")
+rpart.plot(tree)
+
+##Show the importance of each factors 
+varImp <- tibble("Variable"=names(tree$variable.importance),
+                 "Importance"=tree$variable.importance)
+ggplot(varImp, aes(x=reorder(Variable, Importance), weight=Importance)) +
+  geom_bar() + coord_flip() + theme_bw() + 
+  labs(x="", y="Variable importance")
+```
+
+
+```{r}
+##pruning the trees
+tree_ms3 = rpart(target,training_data, control = rpart.control(minsplit = 3))
+tree_ms10 = rpart(target, training_data, control = rpart.control(minsplit =10 ))
+par(mfcol=c(1,1))
+rpart.plot(tree_ms3, main = "minsplit=3")
+rpart.plot(tree_ms10, main = "minsplit=10")
+
+##print the confusion matrix and check the accuracy
+Prediction1 <- predict(tree,newdata=validation[-5],type = 'class')
+confusionMatrix(Prediction1,validation$Species)
+#Accuracy:98%
+prediction2<-predict(tree_ms3,newdata=validation[-5],type = 'class')
+confusionMatrix(prediction2,validation$Species)
+#Accuracy:100%
+prediction3<-predict(tree_ms10,newdata=validation[-5],type = 'class')
+confusionMatrix(prediction3,validation$Species)
+#Accuracy: 100%
+```
+
+
+```{r}
+#boosting
+library(gbm)
+##base model
+fit_gbm <- gbm(Species~.,data=training_data,distribution="multinomial",n.trees=500,interaction.depth=5,n.minobsinnode=10, shrinkage=0.01, bag.fraction=0.75, cv.folds=10, verbose=FALSE)
+##predict via model
+pred = predict.gbm(object = fit_gbm, newdata = validation, n.trees = 500,type = "response")
+labels = colnames(pred)[apply(pred, 1, which.max)]
+result = data.frame(validation$Species, labels)
+print(result)
+##check the confusion matrix
+confusionMatrix(validation$Species, as.factor(labels))
+
+par(mfrow=c(1,1))
+best.iter <- gbm.perf(fit_gbm, method="cv")
+print(best.iter)
+##the optimal n.trees=208
+
+train_predict <- predict.gbm(object=fit_gbm, newdata=validation, 500)
+print(RMSE(validation$Sepal.Length, train_predict))
+R2 <- cor(fit_gbm$fit, training_data$Sepal.Length)^2
+print(R2)
+```
+
+
+```{r}
+#random forest
+library('randomForest')
+rf_fit<-randomForest(Species~.,data=training_data,ntree=100,proximity=TRUE)
+rf_fit
+##table for prediction
+table(predict(rf_fit),training_data$Species)
+##importance of the class discription
+importance(rf_fit)
+##Random Forest for testing data
+pred_rf<-predict(rf_fit,newdata=validation)
+table(pred_rf, validation$Species)
+##plot margin, positive means correct classification
+plot(margin(rf_fit,validation$Species))
+##Check the accuracy
+print(sum(pred_rf==validation$Species)/length(validation$Species))
+```
+
